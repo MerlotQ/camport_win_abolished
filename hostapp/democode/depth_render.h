@@ -1,7 +1,7 @@
 #ifndef DEPTH_RENDER_H_
 #define DEPTH_RENDER_H_
 
-#include <opencv2/core.hpp>
+#include <opencv2/core/core.hpp>
 #include <vector>
 
 class DepthRender {
@@ -23,6 +23,10 @@ class DepthRender {
   //input 16UC1 output 8UC3
   void Compute(cv::Mat &src, cv::Mat &dst);
   void Init();
+  void Uninit(){
+    clr_disp.release();
+    filtered_mask.release();
+  }
 
   OutputColorType color_type;
   ColorRangeMode range_mode;
