@@ -17,14 +17,13 @@
 
 #else
 
-#define PERCIPIO_API __attribute__ ((visibility ("default"))) 
+#define PERCIPIO_API __attribute__ ((visibility ("default")))
 
 #endif
 
 namespace percipio {
 
 enum HardwareModel {
-  ARGUS01 = 1,
   PROTO_03GN03 = 2,
   PROTO_01GN04 = 3,
 };
@@ -48,6 +47,12 @@ enum CameraSourceStatus {
 };
 
 struct Vect3f {
+  Vect3f() {}
+  Vect3f(float _x, float _y, float _z) {
+    x = _x;
+    y = _y;
+    z = _z;
+  }
   float x, y, z;
 };
 
@@ -112,6 +117,7 @@ enum DeviceProperties {
   PROP_FRAME_READY_CALLBACK,
   PROP_CALLBACK_USER_DATA,
   PROP_WAIT_NEXTFRAME_TIMEOUT,
+  PROP_SPECKLE_FILTER,
 };
 
 typedef enum {
@@ -159,12 +165,37 @@ struct CamIntristic {
   float data[9];
 };
 
+//set parameter to negative value will disable filter
+struct SpeckleFilterParam {
+  SpeckleFilterParam() {}
+  SpeckleFilterParam(int max_size, int max_diff) {
+    max_speckle_size = max_size;
+    max_speckle_diff = max_diff;
+  }
+  int max_speckle_size;
+  int max_speckle_diff;
+};
+
+typedef struct {
+  uint8_t prop_id;
+  char *name;
+} DeviceProperty;
+
 typedef void(*EventCallbackFunc)(void *user_data);
 
 //device abi interface
 class ICameraVideoSource {
  public:
   virtual ~ICameraVideoSource() {}
+  virtual int GetDeviceNum() = 0;
+  virtual int GetPropertyNum() = 0;
+  virtual int GetDeviceList(int *devs) = 0;
+  virtual int GetPropertyList(DeviceProperty *device_prop) = 0;
+  virtual CameraSourceStatus FrameGetSync() = 0;
+  virtual CameraSourceStatus FrameGetAsync() = 0;
+  virtual CameraSourceStatus FrameGet(int cam_data_type, ImageBuffer *buff1) = 0;
+  virtual CameraSourceStatus FramePackageGet() = 0;
+  virtual CameraSourceStatus OpenDevice(int id) = 0;
   virtual CameraSourceStatus OpenDevice() = 0;
   virtual void CloseDevice() = 0;
   virtual CameraSourceStatus Config(const char *data) = 0;
@@ -189,15 +220,59 @@ PERCIPIO_API  int LibVersion();
 //depth cam device
 class DepthCameraDevice {
  public:
-  DepthCameraDevice(HardwareModel model = ARGUS01) {
+  DepthCameraDevice(HardwareModel model = PROTO_01GN04) {
     _source = CreateSource(model);
   }
   ~DepthCameraDevice() {
     ReleaseSource(_source);
   }
 
+  void Create(HardwareModel model = PROTO_01GN04) {
+    if (_source) {
+      ReleaseSource(_source);
+      _source = nullptr;
+    }
+    _source = CreateSource(model);
+  }
+
   ICameraVideoSource * get_source() const {
     return _source;
+  }
+
+  int GetPropertyList(DeviceProperty *device_prop) {
+    return get_source()->GetPropertyList(device_prop);
+  }
+
+  int GetDeviceList(int *devs) {
+    return get_source()->GetDeviceList(devs);
+  }
+
+  int GetDeviceNum() {
+    return get_source()->GetDeviceNum();
+  }
+
+  int GetPropertyNum() {
+    return get_source()->GetPropertyNum();
+  }
+
+  CameraSourceStatus FramePackageGet() {
+    return get_source()->FramePackageGet();
+  }
+    
+  CameraSourceStatus FrameGet(int cam_id, ImageBuffer *buff) {
+    return get_source()->FrameGet(cam_id, buff);
+  }
+
+  CameraSourceStatus FrameGetSync() {
+    return get_source()->FrameGetSync();
+  }
+
+  CameraSourceStatus FrameGetAsync() {
+    return get_source()->FrameGetAsync();
+  }
+
+  CameraSourceStatus OpenDevice(int id) {
+    return get_source()->OpenDevice(id);
   }
 
   CameraSourceStatus OpenDevice() {
@@ -227,7 +302,23 @@ class DepthCameraDevice {
   CameraSourceStatus GetFrame(int cam_id, ImageBuffer *buff) {
     return get_source()->GetFrame(cam_id, buff);
   }
+  
+  int GetProperty(int prop_id, char *data, int size) {
+    return get_source()->GetProperty(prop_id, data, size);
+  }
 
+  int SetProperty_Int(int prop_id, int data) {
+    return get_source()->SetProperty(prop_id, (char*)&data, sizeof(data));
+  }
+ 
+  int SetProperty_Bool(int prop_id, bool data) {
+    return get_source()->SetProperty(prop_id, (char*)&data, sizeof(data));
+  }
+  
+  int SetProperty_String(int prop_id, char *data) {
+    return get_source()->SetProperty(prop_id, data, sizeof(data));
+  }
+  
   int SetCmosRegister(int camid, int regid, int value) {
     CmosCtrlParam param;
     param.cam_id = camid;
@@ -264,11 +355,20 @@ class DepthCameraDevice {
 
   //set max blocking time when call NextFrame.
   //for non-blocking NextFrame call, set value to zero or negative num.
-  int SetWaitNextFrameTimeout(int timeout_ms){
+  int SetWaitNextFrameTimeout(int timeout_ms) {
     return get_source()->SetProperty(percipio::PROP_WAIT_NEXTFRAME_TIMEOUT, (char*)timeout_ms, sizeof(timeout_ms));
   }
 
+  int SetSpeckleFilter(SpeckleFilterParam param) {
+    return get_source()->SetProperty(percipio::PROP_SPECKLE_FILTER, (char*)&param, sizeof(param));
+  }
+
+  int GetSpeckleFilter(SpeckleFilterParam *param) {
+    return get_source()->GetProperty(percipio::PROP_SPECKLE_FILTER, (char*)param, sizeof(*param));
+  }
+
  private:
+  DepthCameraDevice(const DepthCameraDevice&);
   ICameraVideoSource * _source;
 };
 

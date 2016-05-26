@@ -109,7 +109,7 @@ void DepthRender::TruncValue(cv::Mat &img, cv::Mat &mask, short min_val, short m
   auto ptr = img.ptr<short>();
   auto mask_ptr = mask.ptr<unsigned char>();
   for (int i = img.size().area(); i != 0; i--) {
-//    auto v = *ptr;
+    auto v = *ptr;
     if (*ptr > max_val) {
       *ptr = max_val;
       *mask_ptr = 0xff;
