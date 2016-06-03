@@ -230,7 +230,7 @@ class DepthCameraDevice {
   void Create(HardwareModel model = PROTO_01GN04) {
     if (_source) {
       ReleaseSource(_source);
-      _source = nullptr;
+      _source = NULL;
     }
     _source = CreateSource(model);
   }
