@@ -7,6 +7,7 @@
 class DepthRender {
  public:
   DepthRender() {
+    min_distance = 200;
     Init();
   }
   enum OutputColorType {
