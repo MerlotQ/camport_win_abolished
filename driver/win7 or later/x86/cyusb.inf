@@ -1,7 +1,7 @@
 ; Installation INF for the Cypress Generic USB Driver for Windows Vista
 ; Processor support for OS unknown platforms.
 ;
-; (c) Copyright 2011 Cypress Semiconductor Corporation
+; (c) Copyright 2016  Percipioxyz Corporation
 ;
 
 [Version]
@@ -9,7 +9,7 @@ Signature="$WINDOWS NT$"
 Class=USB
 ClassGUID={36FC9E60-C465-11CF-8056-444553540000}
 provider=%CYUSB_Provider%
-CatalogFile=CYUSB.cat
+CatalogFile=percipioxyz.cat
 DriverVer=10/17/2011,3.4.7.000
 
 [SourceDisksNames]
@@ -115,11 +115,11 @@ CYUSB.sys
 HKR,,DriverGUID,,%CYUSB.GUID%
 
 [Strings]
-CYUSB_Provider    = "LETCV"
-CYUSB_Company     = "LETCV Corporation"
-CYUSB_Description = "LETCV USB Driver"
-CYUSB_DisplayName = "LETCV USB Generic"
-CYUSB_Install     = "LETCV CYUSB Driver Installation Disk"
-VID_04B4&PID_1003.DeviceDesc="LETCV Argus Device(proto)"
+CYUSB_Provider    = "Percipioxyz"
+CYUSB_Company     = "Percipioxyz Corporation"
+CYUSB_Description = "Percipioxyz USB Driver"
+CYUSB_DisplayName = "Percipioxyz USB Generic"
+CYUSB_Install     = "Percipioxyz USB Driver Installation Disk"
+VID_04B4&PID_1003.DeviceDesc="Percipio Device"
 CYUSB.GUID="{AE18AA60-7F6A-11d4-97DD-00010229B959}"
 CYUSB_Unused      = "."
