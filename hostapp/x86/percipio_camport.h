@@ -11,9 +11,9 @@
 
 #ifndef PERCIPIO_CAMPORT_H_
 #define PERCIPIO_CAMPORT_H_
-#include <cstdint>
 #include <cassert>
 #include <fstream>
+#include <stdint.h>
 
 #ifdef _WIN32
 
@@ -29,7 +29,7 @@
 
 #endif
 
-#define PERCIPIO_CAMPORT_LIB_BUILD_VERSION 2
+#define PERCIPIO_CAMPORT_LIB_BUILD_VERSION 3
 
 /**
  * @brief namespace used by sdk of percipio depth camera
@@ -195,7 +195,25 @@ enum DeviceProperties {
   PROP_SPECKLE_FILTER,          /**< parameter of speckle filter*/
   PROP_UNDISTORT_IR,            /**< IR image undistortion , bool type , true to enable false to disable*/
   PROP_COORDINATE_MAP,          /**< get coordinate mapper*/
+  PROP_TRIGGER_MODE,            /**< trigger mode */
+  PROP_AUTO_GAIN_CTRL,          /**< camera auto gain control*/
 };
+
+/** @brief property types 
+*
+*/
+typedef enum{
+  PROP_TYPE_INT8,
+  PROP_TYPE_INT16,
+  PROP_TYPE_INT32,
+  PROP_TYPE_BOOL,
+  PROP_TYPE_FLOAT,
+  PROP_TYPE_DOUBLE,
+  PROP_TYPE_STRING,
+  PROP_TYPE_STRUCT,
+  PROP_TYPE_ENUM,
+  PROP_TYPE_OTHER,
+} PropertyDataTypes;
 
 /**
  * @brief resolution mode list
@@ -257,12 +275,27 @@ struct CmosCtrlParam {
 };
 
 /**
+* @brief struct for setting Camera Auto Gain Control
+* @see DepthCameraDevice::SetCamGainControl()
+* */
+struct CamGainCtrlParam {
+  CamGainCtrlParam() {}
+  CamGainCtrlParam(int32_t _id, int32_t _gain) {
+    cam_id = _id;
+    gain = _gain;
+  }
+  int32_t cam_id; /**< camera id*/
+  int32_t gain; /**< gain value , set to -1 for auto gain control,positive value for manual control */
+};
+
+
+/**
  * @brief struct for device information
  **/
 struct DeviceInfo {
-  int32_t hardware_model;
-  uint16_t major;
-  uint16_t minor;
+  int32_t hardware_model; /**< device model id*/
+  uint16_t major; /**< device major version */
+  uint16_t minor; /**< device minor version */
   uint8_t  sn[32]; /**< device serial number*/
   int8_t  str_name[64]; /**< device name */
 };
@@ -295,8 +328,10 @@ struct SpeckleFilterParam {
 * @see DepthCameraDevice::GetPropertyList(DeviceProperty *device_prop)
 * */
 typedef struct {
-  uint8_t prop_id;
+  uint32_t prop_id;
   char *name;
+  PropertyDataTypes type;
+
 } DeviceProperty;
 
 /**
@@ -311,7 +346,17 @@ class ICoordinateMapper {
  public:
   virtual ~ICoordinateMapper() {}
   virtual const CamIntristic* get_depth_intristics() = 0;
+  /**
+  * convert point on depth image to world coordinate
+  *@param[in] depth_position  depth image position .
+  *@param[out]   world_position point cloud.
+  */
   virtual int DepthToWorld(const Vect3f *depth_position, Vect3f *world_position) = 0;
+  /**
+  * convert depth map to cloud points
+  *@param[in] depth  depth map .Buffer type should be PIX_16C1.
+  *@param[out] cloud  point cloud .buffer type is PIX_32FC3.
+  */
   virtual int DepthToWorld(const ImageBuffer *depth, ImageBuffer *cloud) = 0;
   virtual int WorldToDepth(const Vect3f *world_position, Vect3f *depth_position) = 0;
 };
@@ -326,10 +371,12 @@ class ICameraVideoSource {
   virtual int GetPropertyNum() = 0;
   virtual int GetDeviceList(int *devs) = 0;
   virtual int GetPropertyList(DeviceProperty *device_prop) = 0;
-  virtual CameraSourceStatus FrameGetSync() = 0;
-  virtual CameraSourceStatus FrameGetAsync() = 0;
-  virtual CameraSourceStatus FrameGet(int cam_data_type, ImageBuffer *buff1) = 0;
+  //trigger device to get a frame sync
+  virtual CameraSourceStatus FramePackageGetSync() = 0;
+  //trigger device to get a frame async
+  virtual CameraSourceStatus FramePackageGetAsync() = 0;
   virtual CameraSourceStatus FramePackageGet() = 0;
+  virtual CameraSourceStatus FrameGet(int cam_data_type, ImageBuffer *buff1) = 0;
   virtual CameraSourceStatus OpenDevice(int id) = 0;
   virtual CameraSourceStatus OpenDevice() = 0;
   virtual void CloseDevice() = 0;
@@ -338,12 +385,12 @@ class ICameraVideoSource {
    *  - negative value for error status
    *  - positive value for the actual data size
    */
-  virtual int GetProperty(int prop_id, char * data_buff, int size) = 0;
+  virtual int GetProperty(int prop_id, void *data_buff, int size) = 0;
   /**@return status
    *  - negative value for error status
    *  - positive value for the actual data size
    */
-  virtual int SetProperty(int prop_id, const char * data, int size) = 0;
+  virtual int SetProperty(int prop_id, const void *data, int size) = 0;
 };
 
 //create camera data source
@@ -441,9 +488,10 @@ class DepthCameraDevice {
   }
 
   /**
-   * @brief retrieve frames captured by device on the same meoment.
+   * @brief retrieve frames captured by device on the same moment.
    *
-   * The frames will save in the internal buffer which managed by library.
+   * a frame package represents a set of image frames captured at the same time.
+   * The frames will save in the internal buffer which managed by this library.
    * In different work mode, the number of frames may be one/two/three, and
    * to get one frame, using FrameGet().
    * @see function FrameGet().
@@ -455,7 +503,7 @@ class DepthCameraDevice {
   /**
    * @brief retrieve on frame from internal buffer which updated by FramePackageGet().
    *
-   * @note Frame data in current buffer won't be modified until FramePackageGet 
+   * @note Frame data in current buffer won't be modified until FramePackageGet , FramePackageGetSync or FramePackageGetASync is called
    * @param cam_id is the frame data type which descriped by emnu CameraFrameDataTypes.
    * @param buff is a ImageBuffer buffer which used to save frame data.
    * @see enum CameraFrameDataTypes.
@@ -466,17 +514,24 @@ class DepthCameraDevice {
   }
 
   /**
-   * @brief Retrieve frame and wait until received.
+   * @brief Retrieve frame package and wait until received in trigger mode.
+   *
+   * call this method will trigger device to capture one frame package and wait unitl data is ready to read.
+   * this method will return with error code if time out.
+   * @see FrameGet()
+   * @see SetWaitNextFrameTimeout()
    */
-  CameraSourceStatus FrameGetSync() {
-    return get_source()->FrameGetSync();
+  CameraSourceStatus FramePackageGetSync() {
+    return get_source()->FramePackageGetSync();
   }
 
   /**
-   * @brief retrieve frame, return immediately.
+   * @brief retrieve frame package, return immediately in trigger mode.
+   *
+   * call this method will trigger device to capture one frame package and return immediately.
    */
-  CameraSourceStatus FrameGetAsync() {
-    return get_source()->FrameGetAsync();
+  CameraSourceStatus FramePackageGetAsync() {
+    return get_source()->FramePackageGetAsync();
   }
 
   /**
@@ -533,6 +588,9 @@ class DepthCameraDevice {
    * @param[in] prop_id the unique identification for a property.
    * @param[out] data value of property.
    * @param[in] size the size of parameter data.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @see enum DeviceProperties.
    */
   int GetProperty(int prop_id, void *data, int size) {
@@ -543,24 +601,33 @@ class DepthCameraDevice {
    * @brief set integer value for the property of device.
    * @param prop_id is the unique identification for a property.
    * @param data value to be set, interge type.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int SetProperty_Int(int prop_id, int data) {
-    return get_source()->SetProperty(prop_id, (char*)&data, sizeof(data));
+    return get_source()->SetProperty(prop_id, &data, sizeof(data));
   }
 
   /**
    * @brief set boolean value for the property of device.
    * @param prop_id is the unique identification for a property.
    * @param data value to be set, boolean type.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int SetProperty_Bool(int prop_id, bool data) {
-    return get_source()->SetProperty(prop_id, (char*)&data, sizeof(data));
+    return get_source()->SetProperty(prop_id, &data, sizeof(data));
   }
 
   /**
    * @brief set string value for the property of device.
    * @param prop_id is the unique identification for a property.
    * @param data value to be set, string type.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of this pointer when success
    */
   int SetProperty_String(int prop_id, char *data) {
     return get_source()->SetProperty(prop_id, data, sizeof(data));
@@ -580,64 +647,82 @@ class DepthCameraDevice {
     param.cam_id = camid;
     param.reg_addr = regid;
     param.reg_value = value;
-    return get_source()->SetProperty(PROP_CMOS_REG, (char*)&param, sizeof(param));
+    return get_source()->SetProperty(PROP_CMOS_REG, &param, sizeof(param));
   }
 
   /**
    * @brief set laser power, equal to SetProperty_Bool(PROP_LASER_POW, ...).
-   * @param duty bright of laser .
+   * @param [in] duty bright of laser .
            - 100 full power.
-           - 0   off  
+           - 0   off
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int SetLaser(unsigned char duty) {
-    return get_source()->SetProperty(PROP_LASER_POW, (char*)&duty, sizeof(duty));
+    return get_source()->SetProperty(PROP_LASER_POW, &duty, sizeof(duty));
   }
 
   /**
    * @brief set output resolution.
    * @param reso struct ResolutionModes type value.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @see struct ResolutionModes.
    */
   int SetDepthResolution(ResolutionModes reso) {
-    return get_source()->SetProperty(PROP_DEPTH_RESOLUTION, (char*)&reso, sizeof(reso));
+    return get_source()->SetProperty(PROP_DEPTH_RESOLUTION, &reso, sizeof(reso));
   }
 
   /**
    * @brief set work mode of device, equal to SetProperty_Int(percipio::PROP_WORKMODE, ...).
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @param mode struct DeviceWorkModes type value.
    * @see struct DeviceWorkModes.
    * @see function SetProperty_Int().
    */
   int SetWorkMode(DeviceWorkModes mode) {
-    return get_source()->SetProperty(percipio::PROP_WORKMODE, (char*)&mode, sizeof(mode));
+    return get_source()->SetProperty(percipio::PROP_WORKMODE, &mode, sizeof(mode));
   }
 
   /**
    * @brief enable/disable point cloud output, equal to SetProperty_Bool(percipio::PROP_POINT_CLOUD_OUTPUT, ...),
    *
    * compute Point cloud for each frame, this require WORKMODE_DEPTH or WORKMODE_IR_DEPTH.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @param[in] enable boolean value.
    * @see function SetProperty_Bool();
    */
   int SetPointCloudOutput(bool enable) {
-    return get_source()->SetProperty(percipio::PROP_POINT_CLOUD_OUTPUT, (char*)&enable, sizeof(enable));
+    return get_source()->SetProperty(percipio::PROP_POINT_CLOUD_OUTPUT, &enable, sizeof(enable));
   }
 
   /**
    * @brief set call back function when one frame is received.
    * @param[in] callback function pointer.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int SetFrameReadyCallback(EventCallbackFunc callback) {
-    return get_source()->SetProperty(percipio::PROP_FRAME_READY_CALLBACK, (char*)callback, sizeof(callback));
+    return get_source()->SetProperty(percipio::PROP_FRAME_READY_CALLBACK, (void *)callback, sizeof(callback));
   }
 
   /**
    * @brief set callback function data.
    * @param data pointer to data.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @see function SetFrameReadyCallback().
    */
   int SetCallbackUserData(void* data) {
-    return get_source()->SetProperty(percipio::PROP_CALLBACK_USER_DATA, (char*)data, sizeof(data));
+    return get_source()->SetProperty(percipio::PROP_CALLBACK_USER_DATA, data, sizeof(data));
   }
 
   /**
@@ -646,24 +731,64 @@ class DepthCameraDevice {
    * invoking thread will be blocked until new frame arrived or time out.
    * for not-blocking FramePackageGet() call, set value to zero or negative.
    * @param[in] timeout_ms block waiting time in milliseconds.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int SetWaitNextFrameTimeout(int timeout_ms) {
-    return get_source()->SetProperty(percipio::PROP_WAIT_NEXTFRAME_TIMEOUT, (char*)timeout_ms, sizeof(timeout_ms));
+    return get_source()->SetProperty(percipio::PROP_WAIT_NEXTFRAME_TIMEOUT, &timeout_ms, sizeof(timeout_ms));
   }
 
   /**
    * @brief set speckle fileter parameter
    * @param param a struct SpeckleFilterParam type argument
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    * @see struct SpeckleFilterParam
    */
-  int SetSpeckleFilter(SpeckleFilterParam param) {
-    return get_source()->SetProperty(percipio::PROP_SPECKLE_FILTER, (char*)&param, sizeof(param));
+  int SetSpeckleFilter(const SpeckleFilterParam &param) {
+    return get_source()->SetProperty(percipio::PROP_SPECKLE_FILTER, &param, sizeof(param));
+  }
+
+  /**
+   * @brief set camera gain status
+   * @param [in] cam_id camera index
+   * @param [in] gain  gain value ,-1 for auto control ,positive value for manual control.
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
+   * @see struct CamGainCtrlParam
+   */
+  int SetCamGainControl(int cam_id, int gain) {
+    CamGainCtrlParam param(cam_id, gain);
+    return get_source()->SetProperty(percipio::PROP_AUTO_GAIN_CTRL, &param, sizeof(param));
+  }
+
+  /**
+   * @brief get camera gain status
+   * @param [in] cam_id camera index
+   * @param [out] gain  gain value ,-1 for auto control ,positive value for manual control.
+   * @see struct CamGainCtrlParam
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
+   * @see SetCamGainControl()
+   */
+  int GetCamGainControl(int cam_id, int *gain) {
+    CamGainCtrlParam param(cam_id, 0);
+    int res = get_source()->GetProperty(percipio::PROP_AUTO_GAIN_CTRL, &param, sizeof(param));
+    *gain = param.gain;
+    return res;
   }
 
   /**
    * @brief get speckle fileter parameter
    * @param param a struct SpeckleFilterParam type argument
    * @see struct SpeckleFilterParam
+   * @return status or data size
+   *     - negative value when failed
+   *     - size of data when success
    */
   int GetSpeckleFilter(SpeckleFilterParam *param) {
     return get_source()->GetProperty(percipio::PROP_SPECKLE_FILTER, (char*)param, sizeof(*param));
@@ -680,6 +805,7 @@ class DepthCameraDevice {
   int GetCoordinateMapper(ICoordinateMapper **mapper) {
     return get_source()->GetProperty(percipio::PROP_COORDINATE_MAP, (char*)mapper, sizeof(ICoordinateMapper**));
   }
+
 
  private:
   DepthCameraDevice(const DepthCameraDevice&);
